@@ -34,7 +34,7 @@ def save_to_json(coco_dict, output_file, allow_cached=True):
                 "You need to clear the cache file if your dataset has been modified."
             )
         else:
-            logger.info(f"Converting annotations of dataset Thermal/RGB data to COCO format ...)")
+            logger.info(f"Converting annotations of data to COCO format ...)")
             logger.info(f"Caching COCO format annotations at '{output_file}' ...")
             with PathManager.open(output_file, "w") as f:
                 json.dump(coco_dict, f)

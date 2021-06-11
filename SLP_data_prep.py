@@ -1,137 +1,83 @@
 import os
 from glob import glob
 import re
+from utils import align
 import numpy as np
 from scipy.io import loadmat
 import shutil
 import cv2
+import itertools
 from converts import convert_box, convert_keypoints, save_to_json
+from utils import read_mat, align, crop_to_image, convert_mat_to_json, convert_lsp_to_coco, save_keypoints_json
 from tqdm import tqdm
 import json
+import random
 import datetime
 from collections import defaultdict
 
 from detectron2.utils.logger import setup_logger
 # import some common detectron2 utilities
-from detectron2 import model_zoo
-from detectron2.engine import DefaultPredictor
-from detectron2.config import get_cfg
-from visual import visual_test
-from detectron2.utils.visualizer import Visualizer
-from detectron2.data import MetadataCatalog, DatasetCatalog
-from detectron2.structures import BitMasks, Boxes, BoxMode, Keypoints, PolygonMasks, RotatedBoxes
-from fvcore.common.file_io import PathManager, file_lock
-from detectron2.data.datasets import register_coco_instances
+# from detectron2 import model_zoo
+# from detectron2.engine import DefaultPredictor
+# from detectron2.config import get_cfg
+# from visual import visual_test
+# from detectron2.utils.visualizer import Visualizer
+# from detectron2.data import MetadataCatalog, DatasetCatalog
+# from detectron2.structures import BitMasks, Boxes, BoxMode, Keypoints, PolygonMasks, RotatedBoxes
+# from fvcore.common.file_io import PathManager, file_lock
+# from detectron2.data.datasets import register_coco_instances
 
 # def glob_re(pattern, strings):
 #     return list(filter(re.compile(pattern).match, strings))
 
 
-lsp2coco_mapping = {
-    0: 16,
-    1: 14,
-    2: 12,
-    3: 11,
-    4: 13,
-    5: 15,
-    6: 10,
-    7: 7,
-    8: 5,
-    9: 6,
-    10: 8,
-    11: 10,
-    12: -1,
-    13: -1,
-}
-lsp_num_of_keypoints = 14
-coco_num_of_keypoints = 17
-coco2lsp_mapping = {}
-coco2lsp_mapping = defaultdict(lambda: -1, coco2lsp_mapping)
+def move_image_pairs(folder_path, cover_needed, output_folder, align_rgb2ir=True):
+    """Move image pairs (IR-RGB) into a combined folder for following training. The directory layout should be the same with COCO dataset.
 
-coco_indexs = list(range(coco_num_of_keypoints))
-
-for key, value in lsp2coco_mapping.items():
-    if value not in coco_indexs:
-        continue
-    else:
-        coco2lsp_mapping[value] = key
-
-
-def convert_lsp_to_coco(lsp_ndarray):
-    """ Convert LSP dataset into COCO format, all the absence joints will be marked as 0 (no joints existed), it an suboptimal solution.
-    :param lsp_ndarray: 1D ndarray, input keypoints in LSP format.
-    :return coco_ndarray: 1D ndarray, converted keypoints in coco format.
+    Args:
+        folder_path (str): The root directory of the original SLP dataset.
+        cover_needed (list): The cover mode included into final dataset.
+        output_folder (str): The output folder.
+        align_rgb2ir (bool, optional): Option to align rgb images to ir images. Defaults to True.
     """
-    coco_ndarray = np.zeros((3 * coco_num_of_keypoints))
-    for i, lsp_idx in enumerate(range(0, len(lsp_ndarray) - 2, 3)):
-        coco_idx = lsp2coco_mapping[i]
-        # If there is no corresponding point in coco format, ignore the lsp keypoint
-        if coco_idx == -1:
-            continue
-        # x and y indicate pixel positions in the image.
-        # v indicates visibility— v=0: not labeled (in which case x=y=0),
-        # v=1: labeled but not visible, and v=2: labeled and visible
-        coco_x_idx, coco_y_idx, coco_v_idx = coco_idx * 3, coco_idx * 3 + 1, coco_idx * 3 + 2
-        lsp_x_idx, lsp_y_idx, lsp_v_idx = lsp_idx, lsp_idx + 1, lsp_idx + 2
-        coco_ndarray[coco_x_idx] = lsp_ndarray[lsp_x_idx]
-        coco_ndarray[coco_y_idx] = lsp_ndarray[lsp_y_idx]
-        coco_ndarray[coco_v_idx] = 2 if (lsp_ndarray[lsp_x_idx] > 0 and lsp_ndarray[lsp_y_idx] > 0) else 0
+    if not os.path.exists(os.path.join(output_folder, 'IR')):
+        os.makedirs(os.path.join(output_folder, 'IR'))
+    if not os.path.exists(os.path.join(output_folder, 'RGB')):
+        os.makedirs(os.path.join(output_folder, 'RGB'))
+    if not os.path.exists(os.path.join(output_folder, 'alignedRGB')):
+        os.makedirs(os.path.join(output_folder, 'alignedRGB'))
 
-    return coco_ndarray
+    counter = 0
+    for lab in tqdm([f for f in sorted(os.listdir(folder_path)) if re.search(r'.*Lab', f)]):
+        sub_folders = [f for f in sorted(os.listdir(os.path.join(folder_path, lab))) if re.search(r'\d{5}', f)]
+        for sub_folder in tqdm(sub_folders):
+            keypoints_rgb = read_mat(os.path.join(folder_path, lab, sub_folder), 'RGB') if align_rgb2ir else None
+            keypoints_ir = read_mat(os.path.join(folder_path, lab, sub_folder), 'IR') if align_rgb2ir else None
+            for cover in tqdm(cover_needed, leave=False):
+                sorted_irs = sorted(glob(os.path.join(folder_path, lab, sub_folder, 'IR', cover, '*.png')))
+                sorted_rgbs = sorted(glob(os.path.join(folder_path, lab, sub_folder, 'RGB', cover, '*.png')))
+                for file_rgb, file_ir in zip(sorted_rgbs, sorted_irs):
+                    tar_path_rgb = '{}/{}/{}.png'.format(output_folder, 'alignedRGB', f"{counter:0>6}")
+                    tar_path_ir = '{}/{}/{}.png'.format(output_folder, 'IR', f"{counter:0>6}")
+                    if align_rgb2ir:
+                        im_rgb = cv2.imread(file_rgb)
+                        im_ir = cv2.imread(file_ir)
+                        kp_rgb = keypoints_rgb[counter % (len(sorted_rgbs)), :, :]
+                        kp_ir = keypoints_ir[counter % (len(sorted_irs)), :, :]
 
-
-def convert_mat_to_json(folder_path, modality):
-    """Read keypoint annotations from .mat files in each subfolder and mapping them to ids.
-    :param folder_path: root folder to the dataset (sim or lab)
-    :param modality: str, 'RGB' or "IR'
-    :return:
-    """
-    sub_folders = [f for f in sorted(glob(r'{}/*/'.format(folder_path))) if re.search(r'\d{5}', f)]
-    mat_name_format = 'joints_gt_{}.mat'
-    keypoints_anno = {}
-
-    for folder_count, sub_folder in enumerate(sub_folders):
-        annots = loadmat(os.path.join(sub_folder, mat_name_format.format(modality)))
-        mat_keypoints = annots['joints_gt']
-        mat_keypoints = np.transpose(mat_keypoints, [2, 1, 0])
-        mat_keypoints = mat_keypoints.reshape(mat_keypoints.shape[0], -1)
-        for i, kp in enumerate(mat_keypoints):
-            counter = folder_count * len(mat_keypoints) + i + 1
-            kp = convert_lsp_to_coco(kp)
-            # Convert keypoints to int.
-            kp = list(kp)
-            kp = [int(v) for v in kp]
-            keypoints_anno['{}'.format(f"{counter:0>6}")] = kp
-
-    return keypoints_anno
-
-
-def save_keypoints_json(save_path, keypoints_anno, modality='RGB'):
-    """Save dic format keypoints for each folder into json file.
-    :param save_path: str, path to the saved (output) json file.
-    :param keypoints_anno: dictionary, the grouped keypoints from each folder.
-    :param modality: str, 'RGB' or 'IR'
-
-    :return: None
-    """
-    with open(os.path.join(save_path, '{}_keypoints_anno.json'.format(modality)), 'w') as output_file:
-        json.dump(keypoints_anno, output_file)
-
-
-def move_image_pairs(folder_path, cover_needed, modalities_needed, output_folder):
-    if not os.path.exists(output_folder):
-        os.makedirs(output_folder)
-
-    sub_folders = [f for f in sorted(os.listdir(folder_path)) if re.search(r'\d{5}', f)]
-
-    for folder_count, sub_folder in enumerate(sub_folders):
-        for cover in cover_needed:
-            for modalities in modalities_needed:
-                sorted_files = sorted(glob(os.path.join(folder_path, sub_folder, modalities, cover, '*.png')))
-                for i, file in enumerate(sorted_files):
-                    counter = folder_count * len(sorted_files) + i + 1
-                    shutil.copy(file, '{}/{}_{}_{}.png'.format(output_folder, cover, modalities, f"{counter:0>6}"))
-                    # print('{}->{}'.format(file, '{}/{}_{}_{}.png'.format(output_folder, cover, modalities, f"{counter:0>6}")))
+                        im_rgb = crop_to_image(
+                            im1=align(im_rgb, im_ir, kp_rgb, kp_ir),
+                            im2=im_ir
+                        )
+                        cv2.imwrite(tar_path_rgb, im_rgb)
+                        cv2.imwrite(tar_path_ir, im_ir)
+                    else:
+                        shutil.copy(file_rgb, '{}/{}/{}.png'.format(output_folder, 'RGB', f"{counter:0>6}"))
+                        shutil.copy(file_ir, '{}/{}/{}.png'.format(output_folder, 'IR', f"{counter:0>6}"))
+                        # print('{}->{}'.format(file_rgb, '{}/{}/{}.png'.format(output_folder, 'RGB', f"{counter:0>6}")))
+                        # print('{}->{}'.format(file_ir, '{}/{}/{}.png'.format(output_folder, 'IR', f"{counter:0>6}")))
+                        
+                    counter += 1
 
 
 def get_bbox(predictor, im):
@@ -162,25 +108,34 @@ def get_bbox(predictor, im):
     return box
 
 
-def get_anno_dict(images_folder, checkpoint_path, keypoint_json_path):
-    """Get COCO annotations from input images.
-    :param images_folder: str, path to the image folder.
-    :param checkpoint_path: str, path to the pre-trained bounding box detector.
-    :param keypoint_json_path: str, path to the keypoint annotation json file.
-    :return coco_dict: dict, the formatted dict to save to json file.
+def get_dummy_bbox(im):
+    """Return dummy bounding box with image size.
+
+    Args:
+        im (numpy.ndarray): input image
+
+    Returns:
+        numpy.ndarray: dummy bounding box, take whole image as bounding box.
+    """
+    h, w = im.shape[:2]
+    return np.array([0, 0, w, h]).reshape(1, -1)
+
+
+def get_annotations_and_coco_image(images_folder, keypoint_json_path):
+    """Get all COCO annotations for coco_annotations and coco_images.
+
+    Args:
+        images_folder (str): Filepath to the IR images.
+        keypoint_json_path (str): Filepath to the presaved keypoint json file.
+
+    Returns:
+        coco_annotations (list): list of dicts, contains all the keypoint annotations for SLP datasets, the bbox is a dummy one. Will be filled into coco_annotations.
+        coco_images (list): list of dicts, contains all the sub information, will be filled into coco_images.
     """
 
     logger.info("Generating prediction results into COCO format")
     coco_annotations = []
     coco_images = []
-
-    # Prepare bounding box detector
-    cfg = get_cfg()
-    cfg.merge_from_file(model_zoo.get_config_file('COCO-Keypoints/keypoint_rcnn_X_101_32x8d_FPN_3x.yaml'))
-    cfg.MODEL.ROI_HEADS.SCORE_THRESH_TEST = 0.95
-    cfg.MODEL.WEIGHTS = checkpoint_path
-
-    predictor = DefaultPredictor(cfg)
 
     # Prepare keypoint annotations.
     with open(keypoint_json_path) as f:
@@ -197,7 +152,8 @@ def get_anno_dict(images_folder, checkpoint_path, keypoint_json_path):
         coco_images.append(coco_image)
 
         # Get the bounding box
-        bbox = get_bbox(predictor, im)
+        # bbox = get_bbox(predictor, im)
+        bbox = get_dummy_bbox(im)
         assert len(bbox) == 1, 'The number of detected bounding box should be 1, got {} instead.'.format(len(bbox))
 
         coco_annotation = {}
@@ -215,42 +171,104 @@ def get_anno_dict(images_folder, checkpoint_path, keypoint_json_path):
 
         coco_annotations.append(coco_annotation)
 
+    return coco_annotations, coco_images
+
+
+def get_splitted_dataset(images_folder, keypoint_json_path, poportions=(0.9, 0.1, 0.0)):
+    """Get COCO annotations for training and testing from input images.
+
+    Args:
+        images_folder (str): Filepath to the IR images.
+        keypoint_json_path (str): Filepath to the presaved keypoint json file.
+        poportion (tuple): Poportion of training_samples, val_samples and test_samples
+
+    Returns:
+        coco_dict_train (dict): coco formatted dict of training set, will be saved into json file.
+        coco_dict_val (dict): coco formatted dict of validation set, will be saved into json file.
+        coco_dict_test (dict): coco formatted dict of test set, will be saved into json file.
+    """
+    logger.info("Generating prediction results into COCO format")
+
+    coco_annotations, coco_images = get_annotations_and_coco_image(images_folder, keypoint_json_path)
+    assert len(coco_images) == len(coco_annotations), 'The length of coco_images and coco_annotations should be the same, got {}, {} instead'.format(
+        len(coco_images), 
+        len(coco_annotations)
+        )
+
+    # Generate indicators for three different dataset according to their poportions (CDF).
+    cdf = tuple(itertools.accumulate(poportions))
+    assert len(cdf) == 3, 'The length of poportions should be 3: (train, val, test), got {} instead'.format(len(cdf))
+    assert cdf[-1] == 1.0, 'The cdf of poportions should be up to 1, got {} instead'.format(cdf[-1])
+
+    probabilities = [random.random() for _ in range(len(coco_images))]
+    indicators = ['train' if p < cdf[0] else 'val' if p < cdf[1] else 'test' for p in probabilities]
+
+    train_selector = [True if indicator == 'train' else False for indicator in indicators]
+    val_selector = [True if indicator == 'val' else False for indicator in indicators]
+    test_selector = [True if indicator == 'test' else False for indicator in indicators]
+
+    coco_images_train = list(itertools.compress(coco_images, train_selector))
+    coco_annotations_train = list(itertools.compress(coco_annotations, train_selector))
+    coco_images_val = list(itertools.compress(coco_images, val_selector))
+    coco_annotations_val = list(itertools.compress(coco_annotations, val_selector))
+    coco_images_test = list(itertools.compress(coco_images, test_selector))
+    coco_annotations_test = list(itertools.compress(coco_annotations, test_selector))
+
     info = {
         "date_created": str(datetime.datetime.now()),
         "description": "Automatically generated COCO json file in SLP Images.",
     }
-    coco_dict = {
+    coco_dict_train = {
         "info": info,
-        "images": coco_images,
-        "annotations": coco_annotations,
+        "images": coco_images_train,
+        "annotations": coco_annotations_train,
+        "categories": [{"supercategory": "person","id": 1,"name": "person","keypoints": ["nose","left_eye","right_eye","left_ear","right_ear","left_shoulder","right_shoulder","left_elbow","right_elbow","left_wrist","right_wrist","left_hip","right_hip","left_knee","right_knee","left_ankle","right_ankle"],"skeleton": [[16,14],[14,12],[17,15],[15,13],[12,13],[6,12],[7,13],[6,7],[6,8],[7,9],[8,10],[9,11],[2,3],[1,2],[1,3],[2,4],[3,5],[4,6],[5,7]]}],
+        "licenses": None,
+    }
+    coco_dict_val = {
+        "info": info,
+        "images": coco_images_val,
+        "annotations": coco_annotations_val,
+        "categories": [{"supercategory": "person","id": 1,"name": "person","keypoints": ["nose","left_eye","right_eye","left_ear","right_ear","left_shoulder","right_shoulder","left_elbow","right_elbow","left_wrist","right_wrist","left_hip","right_hip","left_knee","right_knee","left_ankle","right_ankle"],"skeleton": [[16,14],[14,12],[17,15],[15,13],[12,13],[6,12],[7,13],[6,7],[6,8],[7,9],[8,10],[9,11],[2,3],[1,2],[1,3],[2,4],[3,5],[4,6],[5,7]]}],
+        "licenses": None,
+    }
+    coco_dict_test = {
+        "info": info,
+        "images": coco_images_test,
+        "annotations": coco_annotations_test,
         "categories": [{"supercategory": "person","id": 1,"name": "person","keypoints": ["nose","left_eye","right_eye","left_ear","right_ear","left_shoulder","right_shoulder","left_elbow","right_elbow","left_wrist","right_wrist","left_hip","right_hip","left_knee","right_knee","left_ankle","right_ankle"],"skeleton": [[16,14],[14,12],[17,15],[15,13],[12,13],[6,12],[7,13],[6,7],[6,8],[7,9],[8,10],[9,11],[2,3],[1,2],[1,3],[2,4],[3,5],[4,6],[5,7]]}],
         "licenses": None,
     }
 
-    return coco_dict
+    return coco_dict_train, coco_dict_val, coco_dict_test
 
 
 if __name__ == '__main__':
     logger = setup_logger(name=__name__)
     create_new_image = False
-    create_new_keypoint_json = False
-    target_images_folder = '/home/sky/data/SLP/simLab/combined/images'
-    annotations_folder = '/home/sky/data/SLP/simLab/combined/annotations'
-    save_path = '/home/sky/data/SLP/simLab/combined/annotations'
+    create_new_keypoint_json = True
+    align_rgb2ir = True
+    target_images_folder = '/Users/skywalker/Downloads/SLP/combined/images'
+    annotations_folder = '/Users/skywalker/Downloads/SLP/combined/annotations'
+    save_path = '/Users/skywalker/Downloads/SLP/combined/annotations'
 
-    # checkpoint_path = '/home/sky/checkpoint/model_final_5ad38f.pkl'
+    checkpoint_path = '/home/sky/checkpoint/model_final_5ad38f.pkl'
 
-    folder_path = '/home/sky/data/SLP/simLab'
-    cover_needed = ['uncover']
-    modalities_needed = ['RGB']
+    folder_path = '/Users/skywalker/Downloads/SLP'
+    cover_conditions = ['uncover', 'cover1', 'cover2']
+    modalities = ['RGB', 'IR']
 
     # LSP_format_keypoints = read_mat(file_path)
-
     if create_new_image:
-        move_image_pairs(folder_path, cover_needed, modalities_needed, target_images_folder)
+        move_image_pairs(folder_path, cover_conditions, target_images_folder, align_rgb2ir)
     if create_new_keypoint_json:
-        for modality in modalities_needed:
-            keypoints_anno = convert_mat_to_json(folder_path, modality)
-            save_keypoints_json(annotations_folder, keypoints_anno, modality='RGB')
-    anno_dict = get_anno_dict(target_images_folder, checkpoint_path, '{}/RGB_keypoints_anno.json'.format(annotations_folder))
-    save_to_json(anno_dict, '{}/annotations.json'.format(annotations_folder))
+        keypoints_anno = convert_mat_to_json(folder_path)
+        save_keypoints_json(annotations_folder, keypoints_anno, modality='IR')
+    anno_dict_train, anno_dict_val, anno_dict_test = get_splitted_dataset(
+        os.path.join(target_images_folder, 'IR'),
+        os.path.join(annotations_folder, '{}_keypoints_anno.json'.format('IR')),
+        poportions=(0.9, 0.1, 0.0)
+    )
+    save_to_json(anno_dict_train, '{}/train_annotations.json'.format(annotations_folder))
+    save_to_json(anno_dict_test, '{}/test_annotations.json'.format(annotations_folder))
+    save_to_json(anno_dict_val, '{}/val_annotations.json'.format(annotations_folder))

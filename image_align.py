@@ -1,9 +1,6 @@
-import read_mat
 import cv2
 
-from utils import read_mat, align, crop_with_image
-
-
+from utils import read_mat, align, crop_to_image
 
 if __name__ == '__main__':
     folder_path = '/Users/skywalker/Downloads/simLab'
@@ -17,7 +14,7 @@ if __name__ == '__main__':
     kp2 = ir_keypoints[7, :, :]
 
     aligned_im1 = align(im1, im2, kp1, kp2)
-    aligned_im1 = crop_with_image(aligned_im1, im2)
+    aligned_im1 = crop_to_image(aligned_im1, im2)
 
     cv2.imwrite('rgb.png', aligned_im1)
     cv2.imwrite('ir.png', im2)

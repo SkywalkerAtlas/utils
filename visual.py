@@ -28,10 +28,13 @@ if __name__ == '__main__':
     #
     # visual_test('SLP', '{}/annotations.json'.format(annotations_folder), images_folder, 1)
 
-    json_path = '/home/sky/data/Thermal-pose_data_set/annotations/thermal_post_keypoints.json'
-    rgb_path = '/home/sky/data/Thermal-pose_data_set/images/RGB_images'
+    # json_path = '/home/sky/data/Thermal-pose_data_set/annotations/thermal_post_keypoints.json'
+    # rgb_path = '/home/sky/data/Thermal-pose_data_set/images/RGB_images'
 
-    visual_test('thermal_post_train', json_path, rgb_path, 1)
+    json_path = '/Users/skywalker/Downloads/SLP/combined/annotations/val_annotations.json'
+    img_path = '/Users/skywalker/Downloads/SLP/combined/images/alignedRGB'
+
+    visual_test('thermal_post_train', json_path, img_path, 10)
 
     # images_folder = '/home/sky/data/coco/images/val2017'
     # annotations_folder = '/home/sky/data/coco/annotations'
