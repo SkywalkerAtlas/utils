@@ -243,9 +243,28 @@ def get_splitted_dataset(images_folder, keypoint_json_path, poportions=(0.9, 0.1
     return coco_dict_train, coco_dict_val, coco_dict_test
 
 
+def move_images_into_dir(anno_dict, src, des):
+    """Move images into separate dir
+
+    Args:
+        anno_dict ([type]): [description]
+        src ([type]): [description]
+        des ([type]): [description]
+    """
+    if not os.path.exists(des):
+        os.makedirs(des)
+    logger.info('move files {} -> {}'.format(src, des))
+    for image_info in anno_dict['images']:
+        file_name = image_info['file_name']
+        shutil.move(
+            os.path.join(src, file_name),
+            os.path.join(des, file_name)
+        )
+
+
 if __name__ == '__main__':
     logger = setup_logger(name=__name__)
-    create_new_image = False
+    create_new_image = True
     create_new_keypoint_json = True
     align_rgb2ir = True
     target_images_folder = '/Users/skywalker/Downloads/SLP/combined/images'
@@ -272,3 +291,10 @@ if __name__ == '__main__':
     save_to_json(anno_dict_train, '{}/train_annotations.json'.format(annotations_folder))
     save_to_json(anno_dict_test, '{}/test_annotations.json'.format(annotations_folder))
     save_to_json(anno_dict_val, '{}/val_annotations.json'.format(annotations_folder))
+
+    move_images_into_dir(anno_dict_train, os.path.join(target_images_folder, 'IR'), os.path.join(target_images_folder, 'IR', 'train'))
+    move_images_into_dir(anno_dict_train, os.path.join(target_images_folder, 'alignedRGB'), os.path.join(target_images_folder, 'alignedRGB', 'train'))
+    move_images_into_dir(anno_dict_val, os.path.join(target_images_folder, 'IR'), os.path.join(target_images_folder, 'IR', 'val'))
+    move_images_into_dir(anno_dict_val, os.path.join(target_images_folder, 'alignedRGB'), os.path.join(target_images_folder, 'alignedRGB', 'val'))
+    move_images_into_dir(anno_dict_test, os.path.join(target_images_folder, 'IR'), os.path.join(target_images_folder, 'IR', 'test'))
+    move_images_into_dir(anno_dict_test, os.path.join(target_images_folder, 'alignedRGB'), os.path.join(target_images_folder, 'alignedRGB', 'test'))
