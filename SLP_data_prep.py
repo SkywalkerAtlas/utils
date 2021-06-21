@@ -144,7 +144,7 @@ def get_annotations_and_coco_image(images_folder, keypoint_json_path):
     for file in tqdm(glob('{}/*.png'.format(images_folder))):
         im = cv2.imread(file)
         coco_image = {
-            'id': file.rsplit('/')[-1].split('.')[0],  # Get image id from file name
+            'id': int(file.rsplit('/')[-1].split('.')[0]),  # Get image id from file name
             'width': im.shape[1],
             'height': im.shape[0],
             'file_name': file.rsplit('/')[-1],
@@ -165,7 +165,7 @@ def get_annotations_and_coco_image(images_folder, keypoint_json_path):
         coco_annotation['image_id'] = coco_image['id']
         coco_annotation['category_id'] = 1
         # Keypoints
-        coco_annotation['keypoints'] = keypoints_annos[coco_image['id'].rsplit('_', 1)[-1]]
+        coco_annotation['keypoints'] = keypoints_annos[str(coco_image['id'])]
         coco_annotation['num_keypoints'] = sum(kp > 0 for kp in coco_annotation['keypoints'][2::3])
         coco_annotation["iscrowd"] = 0
 
@@ -264,16 +264,16 @@ def move_images_into_dir(anno_dict, src, des):
 
 if __name__ == '__main__':
     logger = setup_logger(name=__name__)
-    create_new_image = True
+    create_new_image = False
     create_new_keypoint_json = True
     align_rgb2ir = True
-    target_images_folder = '/Users/skywalker/Downloads/SLP/combined/images'
-    annotations_folder = '/Users/skywalker/Downloads/SLP/combined/annotations'
-    save_path = '/Users/skywalker/Downloads/SLP/combined/annotations'
+    target_images_folder = '/home/sky/data/SLP/combined/images'
+    annotations_folder = '/home/sky/data/SLP/combined/annotations'
+    save_path = '/home/sky/data/SLP/combined/annotations'
 
     checkpoint_path = '/home/sky/checkpoint/model_final_5ad38f.pkl'
 
-    folder_path = '/Users/skywalker/Downloads/SLP'
+    folder_path = '/home/sky/data/SLP'
     cover_conditions = ['uncover', 'cover1', 'cover2']
     modalities = ['RGB', 'IR']
 

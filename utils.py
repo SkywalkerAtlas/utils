@@ -144,7 +144,7 @@ def convert_mat_to_json(folder_path, cover_conditions=['uncover', 'cover1', 'cov
                     # Convert all keypoints to int.
                     kp = list(kp)
                     kp = [int(v) for v in kp]
-                    keypoints_anno['{}'.format(f"{counter:0>6}")] = kp
+                    keypoints_anno[int('{}'.format(f"{counter:0>6}"))] = kp
                     counter += 1
 
     return keypoints_anno
