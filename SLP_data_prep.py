@@ -46,6 +46,8 @@ def move_image_pairs(folder_path, cover_needed, output_folder, align_rgb2ir=True
         os.makedirs(os.path.join(output_folder, 'RGB'))
     if not os.path.exists(os.path.join(output_folder, 'alignedRGB')):
         os.makedirs(os.path.join(output_folder, 'alignedRGB'))
+    
+    selected_kp_idx = [0, 1, 10, 13] if align_rgb2ir else None
 
     counter = 0
     for lab in tqdm([f for f in sorted(os.listdir(folder_path)) if re.search(r'.*Lab', f)]):
@@ -120,6 +122,18 @@ def get_dummy_bbox(im):
     h, w = im.shape[:2]
     return np.array([0, 0, w, h]).reshape(1, -1)
 
+def get_dummy_area(im):
+    """Return dummy area with whole image size for coco dataset.
+
+    Args:
+        im (numpy.ndarray): input image
+
+    Returns:
+        float: dummy area size, equals to the image size.
+    """
+    h, w = im.shape[: 2]
+    return float(h * w)
+
 
 def get_annotations_and_coco_image(images_folder, keypoint_json_path):
     """Get all COCO annotations for coco_annotations and coco_images.
@@ -155,12 +169,14 @@ def get_annotations_and_coco_image(images_folder, keypoint_json_path):
         # bbox = get_bbox(predictor, im)
         bbox = get_dummy_bbox(im)
         assert len(bbox) == 1, 'The number of detected bounding box should be 1, got {} instead.'.format(len(bbox))
+        area = get_dummy_area(im)
 
         coco_annotation = {}
         # COCO requirement:
         #   linking annotations to images
         #   "id" field must start with 1
         coco_annotation['bbox'] = [round(float(x), 3) for x in bbox.reshape(-1)]
+        coco_annotation['area'] = round(area, 4)
         coco_annotation['id'] = len(coco_annotations) + 1
         coco_annotation['image_id'] = coco_image['id']
         coco_annotation['category_id'] = 1
@@ -264,7 +280,7 @@ def move_images_into_dir(anno_dict, src, des):
 
 if __name__ == '__main__':
     logger = setup_logger(name=__name__)
-    create_new_image = False
+    create_new_image = True
     create_new_keypoint_json = True
     align_rgb2ir = True
     target_images_folder = '/home/sky/data/SLP/combined/images'
@@ -286,7 +302,7 @@ if __name__ == '__main__':
     anno_dict_train, anno_dict_val, anno_dict_test = get_splitted_dataset(
         os.path.join(target_images_folder, 'IR'),
         os.path.join(annotations_folder, '{}_keypoints_anno.json'.format('IR')),
-        poportions=(0.9, 0.1, 0.0)
+        poportions=(0.3, 0.2, 0.5)
     )
     save_to_json(anno_dict_train, '{}/train_annotations.json'.format(annotations_folder))
     save_to_json(anno_dict_test, '{}/test_annotations.json'.format(annotations_folder))
